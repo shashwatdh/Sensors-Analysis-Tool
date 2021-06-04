@@ -16,48 +16,47 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from preprocessing import *
 from scipy.stats import moment
-"""
-config = {'y_label' : 'No',
-          'char_encoding': {'one_hot_encoder': [],
-                            'label_encoder':[]
-                            },
-          'missing_data' : {'Numerical' : 'mean',
-                            'Categorical' : 'most_frequent',
-                            'fill_value': None},
-          'test_split': 0.2,
-          'Normalization': None,
-          'feat_ext' : [2,3,4]}
-"""
-
 
 """
-Its possible that in a time frame single rec is sensed by sensor. We won't 
-consider such rec.
+Its possible that in a time frame single rec is sensed by sensor. We will 
+only find mean.
 """
 
-def process_feat_ext(config):
+def process_feat_ext(window_data, config):
     
     X = y = None 
     # read data
-    dataset = config['data']
-    
-    # if single data is recorded in window then ignore it
-    if dataset.shape[0] == 1:
-        return []
-    
-    #print(dataset)
+    dataset = window_data['data']
+    base_TS = window_data['base_Timestamp']
+    features_ext = config['feat_ext'][:]
+      
     if config['y_label'] == 'Yes':
         X = dataset[:, :-1]
         y = dataset[:, -1]
     else:
         X = dataset[:,:]
 
-    # creating Processing class object
-    #data_pre_proc = Preprocessing()
+
+    # if single data is recorded in window 
+    if dataset.shape[0] == 1:
+        
+        feature_ext_data = [base_TS]
+        
+        feat_mean = np.mean(X[:,features_ext], axis = 0)
+        feature_ext_data.extend(feat_mean)
+        
+        feat_std = feat_mom3 =  feat_mom4 = feat_perc25 = feat_perc50 = feat_perc75 = [0.0] * len(features_ext)
+        feature_ext_data.extend(feat_std)
+        feature_ext_data.extend(feat_mom3)
+        feature_ext_data.extend(feat_mom4)
+        feature_ext_data.extend(feat_perc25)
+        feature_ext_data.extend(feat_perc50)
+        feature_ext_data.extend(feat_perc75)
+        
+        return feature_ext_data
 
     continuous_ind = []
     categorical_ind = []
-    features_ext = config['feat_ext'][:]
     cols = X.shape[1]
 
     # store indices of categorical attr
@@ -85,19 +84,12 @@ def process_feat_ext(config):
                             config['missing_data']['Numerical'],
                             config['missing_data']['fill_value'])
     
-    print("After handling missing data:")
-    print(X)
-
-    """
-    # finding unique classes in categorical data
-    one_hot_enc_unq = []
-    for index in config['char_encoding']['one_hot_encoder']:
-    one_hot_enc_unq.append(len(np.unique(X[:,index])))
-    """
+    #print("After handling missing data:")
+    #print(X)
 
     # Encode categorical data
-
     # To preserve the index, first perform label encoding
+
     if len(config['char_encoding']['label_encoder']):
         for index in config['char_encoding']['label_encoder']:
             if index == (cols - 1) and config['y_label'] == 'Yes':
@@ -116,8 +108,8 @@ def process_feat_ext(config):
         X = attr_one_hot_encoding(X, categorical_ind)
 
     """
-        After applying one_hot_encoder extra attributes will added in front.
-        So attr index will change. so we need to edit indices of cont attr.
+    After applying one_hot_encoder extra attributes will added in front.
+    So attr index will change. so we need to edit indices of cont attr.
     """
     #print(one_hot_enc_unq)
 
@@ -136,12 +128,7 @@ def process_feat_ext(config):
                     re_arranged_ind.append(addl_attr)
                 else:
                     re_arranged_ind.append(re_arranged_ind[-1] + 1)
-                    """
-                    continuous_ind = []
-                    for index in range(cols):
-                        if type(X[:,index][0]) != str:
-                            continuous_ind.append(re_arranged_ind[index])
-                    """
+                    
         # updating indices of cont attr 
         for index in range(len(continuous_ind)):
             continuous_ind[index] = re_arranged_ind[continuous_ind[index]]
@@ -153,16 +140,14 @@ def process_feat_ext(config):
     # Splitting the dataset into the Training set and Test set
     X_train, X_test, y_train, y_test = data_split(X, y, config['test_split'])
 
+    """
     # Feature Scaling    
     feature_scaling(X_train, X_test, continuous_ind, config['Normalization'])
-
-    print(X_train)
-    print(X_test)
-
-    print(features_ext)
+    """
+    
 
     # feature extraxtion
-    feature_ext_data = []
+    feature_ext_data = [base_TS]
 
     feat_mean = np.mean(X_train[:,features_ext], axis = 0)
     feature_ext_data.extend(feat_mean)
@@ -187,12 +172,4 @@ def process_feat_ext(config):
 
     return feature_ext_data
 
-"""
-for index in range(len(features_ext)):
-    mean = np.mean(X_train[features_ext[:, index]])
-    #var = np.var(X_train[features_ext[index]])
-    std = np.std(X_train[features_ext[:, index]])
-    mom3 = moment(X_train[features_ext[:, index]], moment = 3)
-    mom4 = moment(X_train[features_ext[:, index]], moment = 4)
-    
-"""
+
