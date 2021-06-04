@@ -1,0 +1,4 @@
+{
+    "buf_limit" : 100,
+    "file_dump_limit" : 60
+}

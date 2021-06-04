@@ -1,0 +1,21 @@
+{
+    "dataset_reqd_cols" : [0,2,3,4],
+    "y_label" : "No",
+    "char_encoding": {
+                        "one_hot_encoder": [],
+                        "label_encoder":[]
+                     },
+    "missing_data" : {
+                        "Numerical" : "mean",
+                        "Categorical" : "most_frequent",
+                        "fill_value": -1
+                     },
+    "test_split": 0.2,
+    "Normalization": "",
+    "feat_ext" : [0,1,2],
+    "window_size" : 5,
+    "max_buf_records" : 100,
+    "max_dump_count" : 60    
+}
+          
+          
