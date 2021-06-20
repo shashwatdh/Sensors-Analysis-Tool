@@ -13,9 +13,14 @@
     "test_split": 0.2,
     "Normalization": "",
     "feat_ext" : [0,1,2],
+    "file_name": "acc3_prep_extr_feat",
     "window_size" : 5,
+    "window_shift": 0.5,
     "max_buf_records" : 100,
-    "max_dump_count" : 60    
+    "max_dump_count" : 60,
+    "keep_alive_timer" : 300, 
+    "probe_interval" : 15,
+    "probes_limit" : 10     
 }
           
           

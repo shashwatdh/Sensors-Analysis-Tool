@@ -24,7 +24,7 @@ def Master(conn):
     step_size = window_size // 2
         
     # read sensor dataset
-    dataset = pd.read_csv('gyro_data1.csv')
+    dataset = pd.read_csv('acc2_data.csv')
     X = dataset.iloc[:, reqd_cols].values
     
     base_TS = X[0,0]
@@ -90,7 +90,7 @@ def Slave(conn):
     buf_rec_limit = config_data['max_buf_records']
     file_dump_limit = config_data['max_dump_count']
     buf_dump_count = 0 # no. of times buf is dumped into file
-    file_name = "gyro_prep_extr_feat"
+    file_name = "acc2_prep_extr_feat"#"gyro_prep_extr_feat"
     file = "{0}{1}.csv".format(file_name, fetch_time_stmp())
     
     while True:
