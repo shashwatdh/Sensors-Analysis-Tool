@@ -1,0 +1,8 @@
+{
+    "technique" : "GroupKFold",
+    "n_splits" : 5,
+    "shuffle" : "False",
+    "random_state" : "None",
+    "group_id_col" : "sub_id",
+    "group_label" : []
+}
