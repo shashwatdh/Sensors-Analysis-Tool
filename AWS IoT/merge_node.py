@@ -7,7 +7,8 @@ import pandas as pd
 from functools import reduce
 import sys
 from os.path import exists
-from services import fetch_time_stmp
+from services import fetch_time_stmp, df_cols
+from missingDataImputer import missing_data_impute_exp
 """
     Initial Setup:
         1) For each sensor initailize the empty state.
@@ -47,10 +48,16 @@ for sensor in sensor_data:
     sensors_state[sensor["id"]]["rec_base_Timestamp"] = -1
     sensors_state[sensor["id"]]["data"] = []
     #  Initialize merge_data for each sensor
-    merge_data[sensor["id"]] = []
+    merge_data[sensor["id"]] = {"base_Timestamp" : -1,
+                                "data" : [],
+                                "forced_merge" : False}#[]
+    # Initialize column headers
+    merge_data[sensor["id"]]["cols"] = df_cols(sensor["id"], len(sensor["dataset_reqd_cols"]))
     # 2.1) Setting topic for each sensor to publish ACK
     publish_topics[sensor["id"]] = str(sensor["id"]) + "/ack"
-    
+
+print(merge_data)
+print(merge_data[1]["cols"])
 # 1.2) Initializing value of counting semaphore
 counting_semaphore = len(sensor_data)
 
@@ -105,6 +112,7 @@ def process_data_packet(payload):
         #sensors_end_count += 1
         sensors_end_req.append(sensor_id)
         return 
+    
     # Check for validity of data packet
     if rcvd_data["base_Timestamp"] < last_commit_baseTS:
         # invalid data, as old data is rcvd. But send ACK
@@ -152,7 +160,6 @@ def process_data_packet(payload):
             def fetch_lastTS_sensor():
                 # Fetch oldest recent_timestamp 
                 max_TS = rcvd_data["base_Timestamp"]
-                #min_TS = last_TS + (sensors_state[sensor_id]["window_size"] * sensors_state[sensor_id]["step_size"]) # lastTS + step_size, even +1 wud have worked
                 for sensor in sensors_state.keys():
                     TS = sensors_state[sensor]["rec_base_Timestamp"] # or sensors_state[sensor]["data"][0]["base_Timestamp"] 
                     if (TS >= 0) and (TS < max_TS):
@@ -180,7 +187,11 @@ def process_data_packet(payload):
                     if head_packet["base_Timestamp"] - start_TS < threshold:
                         # push sensor data to merge_data, delete head packet and
                         # update sensor's baseTS
-                        merge_data[sensor] = head_packet["data"]  #**************pd.DataFrame(data)
+                        #merge_data[sensor] = head_packet#["data"]  #**************pd.DataFrame(data)
+                        merge_data[sensor]["base_Timestamp"] = head_packet["base_Timestamp"]
+                        merge_data[sensor]["data"] = head_packet["data"]
+                        merge_data[sensor]["forced_merge"] = False
+                        
                         del sensors_state[sensor]["data"][0]
                         if len(sensors_state[sensor]["data"]):
                             sensors_state[sensor]["base_Timestamp"] = sensors_state[sensor]["data"][0]["base_Timestamp"]
@@ -188,23 +199,103 @@ def process_data_packet(payload):
                             sensors_state[sensor]["base_Timestamp"] = -1 # all data packets have been merged, this can also be used to check if semaphore val can be dec 
                     else:
                         # push [] to merge_data as head packet can't be merged
-                        merge_data[sensor] = []
-                
+                        #merge_data[sensor]["data"] = []
+                        # Forcefully merge the data, merged window can have imputed vals
+                        # or can be discarded
+                        merge_data[sensor]["forced_merge"] = True
                 # merge the valid head data packets
                 def merge_data_pck():
                     cols = ["timestamp", "x","y","z"]
                     tmp_cols = ["timestamp"]
                     dataframes = []
+                    sensors = list(sensors_state.keys())
                     # refer https://stackoverflow.com/questions/44327999/python-pandas-merge-multiple-dataframes
+                    """
+                    def df_cols(sensor_id):
+                        # returns dataframe columns
+                        tot_cols = len(merge_data[sensor_id]["data"][0])
+                        cols = ["timestamp"]
+                        for i in range(1, tot_cols):
+                            cols.append(str(sensor_id) + "_" + str(i))
+                        return cols
+                    """
+                    
+                    """
+                        Merging and imputation.
+                            
+                        For each sensor check if forced_merge option is set. If it is, then we 
+                        need to impute values for missing window and save as dataframe. Else,
+                        just store data as dataframe and perform merge.
+                        
+                    """
+                    
+                    left = sensors[0]
+                    #print("left:",left,merge_data[left])
+                    left_cols = merge_data[left]["cols"]
+                    
+                    #print("left_cols:",left_cols)
+                    if merge_data[left]["forced_merge"]:
+                        last_pkt = merge_data[left]
+                        next_pkt = ({"base_Timestamp":-1, "data":[]}, 
+                                    sensors_state[left]["data"][0]) [len(sensors_state[left]["data"]) != 0]
+                        left_df = missing_data_impute_exp(last_pkt, next_pkt, start_TS, left_cols)
+                        #print(left_df)
+                        if left_df is None:
+                            return
+                    else:
+                        left_df = pd.DataFrame(merge_data[left]["data"], columns = left_cols)
+                    
+                    right = sensors[1]
+                    right_cols = merge_data[right]["cols"]
+                    if merge_data[right]["forced_merge"]:
+                        last_pkt = merge_data[right]
+                        next_pkt = ({"base_Timestamp":-1, "data":[]}, 
+                                    sensors_state[right]["data"][0]) [len(sensors_state[right]["data"]) != 0]
+                        right_df = missing_data_impute_exp(last_pkt, next_pkt, start_TS, right_cols)
+                        #print(right_df)
+                        if right_df is None:
+                            return
+                    else:
+                        right_df = pd.DataFrame(merge_data[right]["data"], columns = right_cols)
+                    
+                    
+                    if merge_data[left]["forced_merge"] and not merge_data[right]["forced_merge"]:
+                        # swap DFs order as it's better to use actual data as left_index for merging
+                        #print("left:",left_df)
+                        left_df = pd.merge_asof(right_df, left_df, on = "timestamp",tolerance = 2.0, direction = "backward")
+                        rearranged_cols = left_cols + right_cols[1:]
+                        #print("rearranged cols:",rearranged_cols)
+                        #print("left_df",left_df)
+                        left_df = left_df.loc[:, rearranged_cols]
+                    
+                    else:
+                        left_df = pd.merge_asof(left_df, right_df, on = "timestamp",tolerance = 2.0, direction = "backward")
+                        
+                    for sensor in sensors[2:]:
+                        cols =  merge_data[sensor]["cols"]
+                        if merge_data[sensor]["forced_merge"]:
+                            last_pkt = merge_data[sensor]
+                            next_pkt = ({"base_Timestamp":-1, "data":[]}, 
+                                        sensors_state[sensor]["data"][0]) [len(sensors_state[sensor]["data"]) != 0]
+                            right_df = missing_data_impute_exp(last_pkt, next_pkt, start_TS, cols)
+                            if right_df is None:
+                                return
+                        else:
+                            right_df = pd.DataFrame(merge_data[sensor]["data"], columns = cols)
+                        
+                        left_df = pd.merge_asof(left_df, right_df, on = "timestamp",tolerance = 2.0, direction = "backward")
+                      
+                    """    
                     for sensor in sensors_state.keys():
-                        for attr_index in range(1, len(cols)):
-                            tmp_cols.append(str(sensor) + "_" + cols[attr_index])
-                        dataframes.append(pd.DataFrame(merge_data[sensor], columns=tmp_cols[:]))
-                        tmp_cols = ["timestamp"]
+                        #for attr_index in range(1, len(cols)):
+                        #    tmp_cols.append(str(sensor) + "_" + cols[attr_index])
+                        dataframes.append(pd.DataFrame(merge_data[sensor]["data"], columns=tmp_cols[:]))
+                        tmp_cols = ["timestamp"]"""
                     
                     """
                     df_merged = reduce(lambda  left,right: pd.merge_asof(left,right,on = "timestamp",                
                                                                 tolerance = 2, direction = "backward"), dataframes)
+                    """
                     """
                     df_merged = reduce(lambda  left,right: 
                                        pd.merge_asof(left,right,on = "timestamp",tolerance = 2.0, direction = "backward")
@@ -217,18 +308,24 @@ def process_data_packet(payload):
                                                    pd.concat([left.iloc[:,1:], right.iloc[:,1:]], axis = 1)
                                                )
                                            ), dataframes)
-                     
+                    
+                        
+                    df_merged1 = reduce(lambda left, right:
+                                            
+                                        ,sensors_state.keys())"""
+                        
+                    """    
                     # Rearranging the cols so that "timestamp" is the first col
                     df_merged = pd.concat([df_merged.loc[:,"timestamp"],
                                            df_merged.loc[:,[col for col in df_merged.columns.tolist() 
                                                             if col != "timestamp"]]
-                                           ],axis = 1)
+                                           ],axis = 1)"""
                     file_path = os.path.join(".", file_name)
                     if not exists(file_path):    
-                        df_merged.to_csv(file_path, mode="a", header=True)
+                        left_df.to_csv(file_path, mode="a", header=True)
                     else:
-                        df_merged.to_csv(file_path, mode="a")
-                    print(df_merged)
+                        left_df.to_csv(file_path, mode="a")
+                    print(left_df)
                 
                 merge_data_pck()
                 #global sensors_end_req
@@ -247,7 +344,7 @@ def process_data_packet(payload):
                     for sensor in sensors_end_req:
                         if (sensor in sensors_state) and len(sensors_state[sensor]["data"]) == 0:
                             # clear state
-                            merge_data[sensor] = []
+                            merge_data[sensor]["data"] = []
                             del sensors_state[sensor]
                             del publish_topics[sensor]
                             sensors_end_count += 1

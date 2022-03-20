@@ -36,14 +36,15 @@ publish_data_lock = True
 sub_topic = "1/ack" # Topic to receive ACK
 data_list = []
 
+#dataset = pd.read_csv(data_path, header=None)
 dataset = pd.read_csv(data_path)
-X = dataset.iloc[:, reqd_cols].values
+X = dataset.iloc[:50, reqd_cols].values
 """
     base_TS can't be assigned to some random value. We must calculate
     base_TS of window nearest to rec if no error would have occured. 
 """
 base_TS = (X[0,0] // window_size) * window_size
-base_TS += step_size if (base_TS + step_size) <= X[0,0] else 0
+#base_TS += step_size if (base_TS + step_size) <= X[0,0] else 0
 
 #base_TS = X[0,0]
 sensor_data = []
@@ -78,6 +79,10 @@ def on_connect(client, userdata, flags, rc):
     print("Connection returned result: " + str(rc) )
     # Subscribe to ACK topic
     mqttc.subscribe(sub_topic, 1)
+    
+    if len(data_list) and (data_list[-1]['data'] == "End"):  
+        push_data_pck()
+        
     publish_data_lock = False           # Enable producer to publish data on channel 
 
 def on_message(mosq, obj, msg):
@@ -186,7 +191,7 @@ for rec in X:
                 base_TS of window nearest to rec if no error would have occured. 
             """
             base_TS = (rec[0] // window_size) * window_size
-            base_TS += step_size if (base_TS + step_size) <= rec[0] else 0
+            #base_TS += step_size if (base_TS + step_size) <= rec[0] else 0
         
         sensor_data.append(rec[:].tolist())
         
@@ -202,41 +207,3 @@ while base_TS <= rec[0]:
 # Push END packet
 push_to_dataQ("End")
 
-'''    
-        if rec[0] < (base_TS + window_size):
-            sensor_data.append(rec[:])
-        else:
-            """ 
-                cur rec can't be added to window, so push cur sensor data to
-                data queue. And set cur rec's TS as base TS
-            
-            """ 
-            if len(sensor_data):
-                data_list.append(sensor_data)
-            
-            sensor_data = []
-            
-                           
-while True:
-    sleep(5)                                                        # waiting between messages
-    if connflag == True:
-        temp = str(randint(-50, 50))                                # computation of all the (random) values
-        hum = str(randint(0, 100))                                  # of the sensors, for this
-        wind_dir = str(randint(0, 360))                             # specific station (with id 1)
-        wind_int = str(randint(0, 100))
-        rain = str(randint(0, 50))
-        time = str(datetime.datetime.now())[:19]                    
-        
-        data ={"deviceid":str(1), "datetime":time, "temperature":temp, "humidity":hum,
-               "windDirection":wind_dir, "windIntensity":wind_int, "rainHeight":rain}
-        jsonData = json.dumps(data)
-        mqttc.publish("sensor/data", jsonData, qos=1)               # publish message 
-      
-        print("Message sent: time ",time)                           
-        print("Message sent: temperature ",temp," Celsius")         
-        print("Message sent: humidity ",hum," %")
-        print("Message sent: windDirection ",wind_dir," Degrees")
-        print("Message sent: windIntensity ",wind_int," m/s")
-        print("Message sent: rainHeight ",rain," mm/h\n")
-    else:
-        print("waiting for connection...")'''
