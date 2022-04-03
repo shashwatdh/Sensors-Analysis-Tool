@@ -9,6 +9,7 @@ import sys
 from os.path import exists
 from services import fetch_time_stmp, df_cols
 from missingDataImputer import missing_data_impute_exp
+import time
 """
     Initial Setup:
         1) For each sensor initailize the empty state.
@@ -30,12 +31,15 @@ fp.close()
 
 file_name = "sensors_merged_data_test_" + fetch_time_stmp() + ".csv"
 sensor_data = config_data["sensors"]
+merge_config = config_data["merge"]
+handle_missing_win = merge_config["handle_missing_window"]
 
 sensors_state = {}
 last_commit_baseTS = -1   
 publish_topics = {}
 merge_data = {}
 sensors_end_req = [] # List of sensors requested to end the trans
+sensors_id = []
 sensors_end_count = 0
 tot_sensor_nodes = len(sensor_data) 
 
@@ -55,6 +59,7 @@ for sensor in sensor_data:
     merge_data[sensor["id"]]["cols"] = df_cols(sensor["id"], len(sensor["dataset_reqd_cols"]))
     # 2.1) Setting topic for each sensor to publish ACK
     publish_topics[sensor["id"]] = str(sensor["id"]) + "/ack"
+    sensors_id.append(sensor["id"]) #unnecessary, use sensor_data instead
 
 print(merge_data)
 print(merge_data[1]["cols"])
@@ -75,6 +80,7 @@ KEY_PATH = os.path.join(".", "certs_merge","d056be5e3680c2fe06a1410774e479c33a34
 def send_ack(sensor_id, status):
     # Sends ack
     res_data = {"status" : status}
+    print(res_data)
     mqttc.publish(publish_topics[sensor_id], json.dumps(res_data), qos=1)
 
 
@@ -110,7 +116,28 @@ def process_data_packet(payload):
         #del publish_topics[sensor_id]
         #global sensors_end_count
         #sensors_end_count += 1
-        sensors_end_req.append(sensor_id)
+        if len(sensors_state[sensor_id]["data"]) == 0:
+                    
+            for s_id in sensors_id:
+                # clear state
+                merge_data[s_id]["data"] = []
+                del sensors_state[s_id]
+                #del publish_topics[sensor]
+                #sensors_end_count += 1
+                    
+                # send ack to sensor node to disconnect
+                send_ack(s_id, 403)
+                
+            print("Aborting Merge Operation......")
+            # Once state of all sensors have been cleared, unsubscribe to MQTT
+            # topic, disconnect from broker and terminate the process.
+            time.sleep(10)
+            mqttc.unsubscribe(MQTT_TOPIC)
+            mqttc.loop_stop()    #Stop loop 
+            mqttc.disconnect() # disconnect
+            sys.exit(0)
+        else:
+            sensors_end_req.append(sensor_id)
         return 
     
     # Check for validity of data packet
@@ -160,7 +187,7 @@ def process_data_packet(payload):
             def fetch_lastTS_sensor():
                 # Fetch oldest recent_timestamp 
                 max_TS = rcvd_data["base_Timestamp"]
-                for sensor in sensors_state.keys():
+                for sensor in sensors_id:#sensors_state.keys():
                     TS = sensors_state[sensor]["rec_base_Timestamp"] # or sensors_state[sensor]["data"][0]["base_Timestamp"] 
                     if (TS >= 0) and (TS < max_TS):
                         max_TS = TS
@@ -172,7 +199,7 @@ def process_data_packet(payload):
                 nonlocal sensor_id
                 # Fetch nearest timestamp from last_commit_TS and corresponding sensor
                 min_TS = last_TS + (sensors_state[sensor_id]["window_size"] * sensors_state[sensor_id]["step_size"]) # lastTS + step_size, even +1 wud have worked
-                for sensor in sensors_state.keys():
+                for sensor in sensors_id:#sensors_state.keys():
                     TS = sensors_state[sensor]["base_Timestamp"] # or sensors_state[sensor]["data"][0]["base_Timestamp"] 
                     if (TS >= 0) and (TS < min_TS):
                         (min_TS, sensor_id) = (TS, sensor)
@@ -182,7 +209,7 @@ def process_data_packet(payload):
             while start_TS <= last_TS:
                 threshold = sensors_state[sensor]["window_size"] * sensors_state[sensor]["step_size"] # threshold = step_size  
                 # Check if head packet of a sensor can be merged
-                for sensor in sensors_state.keys():
+                for sensor in sensors_id:#sensors_state.keys():
                     head_packet = sensors_state[sensor]["data"][0]
                     if head_packet["base_Timestamp"] - start_TS < threshold:
                         # push sensor data to merge_data, delete head packet and
@@ -208,7 +235,7 @@ def process_data_packet(payload):
                     cols = ["timestamp", "x","y","z"]
                     tmp_cols = ["timestamp"]
                     dataframes = []
-                    sensors = list(sensors_state.keys())
+                    #sensors = list(sensors_state.keys())
                     # refer https://stackoverflow.com/questions/44327999/python-pandas-merge-multiple-dataframes
                     """
                     def df_cols(sensor_id):
@@ -229,57 +256,71 @@ def process_data_packet(payload):
                         
                     """
                     
-                    left = sensors[0]
+                    left = sensors_id[0]#sensors[0]
                     #print("left:",left,merge_data[left])
                     left_cols = merge_data[left]["cols"]
                     
                     #print("left_cols:",left_cols)
                     if merge_data[left]["forced_merge"]:
-                        last_pkt = merge_data[left]
-                        next_pkt = ({"base_Timestamp":-1, "data":[]}, 
-                                    sensors_state[left]["data"][0]) [len(sensors_state[left]["data"]) != 0]
-                        left_df = missing_data_impute_exp(last_pkt, next_pkt, start_TS, left_cols)
-                        #print(left_df)
-                        if left_df is None:
+                        if handle_missing_win == "discard":
                             return
+                        elif handle_missing_win == "impute":
+                            last_pkt = merge_data[left]
+                            next_pkt = ({"base_Timestamp":-1, "data":[]}, 
+                                            sensors_state[left]["data"][0]) [len(sensors_state[left]["data"]) != 0]
+                            left_df = missing_data_impute_exp(last_pkt, next_pkt, start_TS, left_cols)
+                            print("Imputed Left_df:",left_df)
+                            #print(left_df)
+                            if left_df is None:
+                                return
                     else:
                         left_df = pd.DataFrame(merge_data[left]["data"], columns = left_cols)
+                        print("imputed left_df:", left_df)
+                        #print("left cols:", left_cols)
                     
-                    right = sensors[1]
+                    right = sensors_id[1]#sensors[1]
                     right_cols = merge_data[right]["cols"]
                     if merge_data[right]["forced_merge"]:
-                        last_pkt = merge_data[right]
-                        next_pkt = ({"base_Timestamp":-1, "data":[]}, 
-                                    sensors_state[right]["data"][0]) [len(sensors_state[right]["data"]) != 0]
-                        right_df = missing_data_impute_exp(last_pkt, next_pkt, start_TS, right_cols)
-                        #print(right_df)
-                        if right_df is None:
+                        if handle_missing_win == "discard":
                             return
+                        elif handle_missing_win == "impute":
+                            last_pkt = merge_data[right]
+                            next_pkt = ({"base_Timestamp":-1, "data":[]}, 
+                                            sensors_state[right]["data"][0]) [len(sensors_state[right]["data"]) != 0]
+                            right_df = missing_data_impute_exp(last_pkt, next_pkt, start_TS, right_cols)
+                            print("Imputed rt_df:",right_df)
+                            #print(right_df)
+                            if right_df is None:
+                                return
                     else:
                         right_df = pd.DataFrame(merge_data[right]["data"], columns = right_cols)
                     
                     
                     if merge_data[left]["forced_merge"] and not merge_data[right]["forced_merge"]:
                         # swap DFs order as it's better to use actual data as left_index for merging
-                        #print("left:",left_df)
+                        print("Before merge, left:",left_df)
+                        
                         left_df = pd.merge_asof(right_df, left_df, on = "timestamp",tolerance = 2.0, direction = "backward")
                         rearranged_cols = left_cols + right_cols[1:]
-                        #print("rearranged cols:",rearranged_cols)
-                        #print("left_df",left_df)
+                        print("rearranged cols:",rearranged_cols)
+                        print("left_df",left_df)
                         left_df = left_df.loc[:, rearranged_cols]
                     
                     else:
                         left_df = pd.merge_asof(left_df, right_df, on = "timestamp",tolerance = 2.0, direction = "backward")
                         
-                    for sensor in sensors[2:]:
+                    for sensor in sensors_id[2:]:#sensors[2:]:
                         cols =  merge_data[sensor]["cols"]
                         if merge_data[sensor]["forced_merge"]:
-                            last_pkt = merge_data[sensor]
-                            next_pkt = ({"base_Timestamp":-1, "data":[]}, 
-                                        sensors_state[sensor]["data"][0]) [len(sensors_state[sensor]["data"]) != 0]
-                            right_df = missing_data_impute_exp(last_pkt, next_pkt, start_TS, cols)
-                            if right_df is None:
+                            if handle_missing_win == "discard":
                                 return
+                            elif handle_missing_win == "impute":
+                                last_pkt = merge_data[sensor]
+                                next_pkt = ({"base_Timestamp":-1, "data":[]}, 
+                                                sensors_state[sensor]["data"][0]) [len(sensors_state[sensor]["data"]) != 0]
+                                right_df = missing_data_impute_exp(last_pkt, next_pkt, start_TS, cols)
+                                if right_df is None:
+                                    return
                         else:
                             right_df = pd.DataFrame(merge_data[sensor]["data"], columns = cols)
                         
@@ -330,6 +371,7 @@ def process_data_packet(payload):
                 merge_data_pck()
                 #global sensors_end_req
                 # Check for end_trans req
+                '''
                 if len(sensors_end_req):
                     """ 
                         some sensor has put end_trans req
@@ -338,19 +380,34 @@ def process_data_packet(payload):
                         
                         If data field is set in sensors_state that means there is data yet
                         to be merged and we can't clear state.
+                        
+                        If END pkt has been received from any sensor, abort merge operaton
+                        and clear state of all the sensorss.
                     """
                     
                     global sensors_end_count
                     for sensor in sensors_end_req:
-                        if (sensor in sensors_state) and len(sensors_state[sensor]["data"]) == 0:
-                            # clear state
-                            merge_data[sensor]["data"] = []
-                            del sensors_state[sensor]
-                            del publish_topics[sensor]
-                            sensors_end_count += 1
+                        #if (sensor in sensors_state) and len(sensors_state[sensor]["data"]) == 0:
+                        if len(sensors_state[sensor]["data"]) == 0:
                             
-                            # send ack to sensor node to disconnect
-                            send_ack(sensor_id, 403)
+                            for sensor in sensors_id:
+                                # clear state
+                                merge_data[sensor]["data"] = []
+                                del sensors_state[sensor]
+                                #del publish_topics[sensor]
+                                sensors_end_count += 1
+                            
+                                # send ack to sensor node to disconnect
+                                send_ack(sensor_id, 403)
+                            
+                            print("Aborting Merge Operation......")
+                            # Once state of all sensors have been cleared, unsubscribe to MQTT
+                            # topic, disconnect from broker and terminate the process.
+                            mqttc.unsubscribe(MQTT_TOPIC)
+                            mqttc.loop_stop()    #Stop loop 
+                            mqttc.disconnect() # disconnect
+                            sys.exit(0)
+                    """
                     # if all sensors have ended trans then we must terminate the process
                     if sensors_end_count == tot_sensor_nodes:
                         mqttc.unsubscribe(MQTT_TOPIC)
@@ -358,9 +415,50 @@ def process_data_packet(payload):
                         mqttc.disconnect() # disconnect
                         sys.exit(0)
                     #sensors_end_req = [] # as all end req are processed
-                
+                    """'''
                 last_commit_baseTS = start_TS
                 (start_TS, sensor) = fetch_startTS_sensor()
+            
+            
+            # handle end req
+            if len(sensors_end_req):
+                print("rcvd end req")
+                """ 
+                    some sensor has put end_trans req
+                    Before clearing state, its imp to check if no data is stored and 
+                    old data has been merged.
+                    
+                    If data field is set in sensors_state that means there is data yet
+                    to be merged and we can't clear state.
+                    
+                    If END pkt has been received from any sensor, abort merge operaton
+                    and clear state of all the sensorss.
+                """
+                
+                global sensors_end_count
+                for sensor in sensors_end_req:
+                    #if (sensor in sensors_state) and len(sensors_state[sensor]["data"]) == 0:
+                    if len(sensors_state[sensor]["data"]) == 0:
+                        
+                        for s_id in sensors_id:
+                            # clear state
+                            merge_data[s_id]["data"] = []
+                            del sensors_state[s_id]
+                            #del publish_topics[sensor]
+                            sensors_end_count += 1
+                        
+                            # send ack to sensor node to disconnect
+                            send_ack(s_id, 403)
+                            
+                        print("Aborting Merge Operation......")
+                        # Once state of all sensors have been cleared, unsubscribe to MQTT
+                        # topic, disconnect from broker and terminate the process.
+                        time.sleep(10)
+                        mqttc.unsubscribe(MQTT_TOPIC)
+                        mqttc.loop_stop()    #Stop loop 
+                        mqttc.disconnect() # disconnect
+                        sys.exit(0)
+                
             
             """
                 Once reqd data packets have been merged, set the value of semaphore equal to 
@@ -370,7 +468,8 @@ def process_data_packet(payload):
             for sensor in sensors_state.keys():
                 if sensors_state[sensor]["base_Timestamp"] < 0:
                     counting_semaphore += 1
-                
+        
+        
 # Define on connect event function
 # We shall subscribe to our Topic in this function
 def on_connect(mosq, obj, flags,rc):
@@ -389,6 +488,9 @@ def on_message(mosq, obj, msg):
 def on_subscribe(mosq, obj, mid, granted_qos):
     print("Subscribed to Topic: " + MQTT_TOPIC)
 
+def on_publish(client,userdata,result):             #create function for callback
+    print("data published: \n")
+    print(result)
 # Initiate MQTT Client
 mqttc = mqtt.Client()
 
@@ -396,7 +498,7 @@ mqttc = mqtt.Client()
 mqttc.on_message = on_message
 mqttc.on_connect = on_connect
 mqttc.on_subscribe = on_subscribe
-
+mqttc.on_publish = on_publish
 # Configure TLS Set
 mqttc.tls_set(ca_certs=CA_PATH, certfile=CERT_PATH, keyfile=KEY_PATH, cert_reqs=ssl.CERT_REQUIRED,
               tls_version=ssl.PROTOCOL_TLSv1_2, ciphers=None) 

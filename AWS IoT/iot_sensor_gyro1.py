@@ -36,9 +36,11 @@ publish_data_lock = True
 sub_topic = "2/ack" # Topic to receive ACK
 data_list = []
 
+datatset_rows_limit = 109
+
 #dataset = pd.read_csv(data_path, header=None)
 dataset = pd.read_csv(data_path)
-X = dataset.iloc[:50, reqd_cols].values
+X = dataset.iloc[:datatset_rows_limit, reqd_cols].values
 
 base_TS = (X[0,0] // window_size) * window_size
 #base_TS += step_size if (base_TS + step_size) <= X[0,0] else 0
@@ -99,12 +101,16 @@ def on_message(mosq, obj, msg):
         data on channel.
     """
     res = json.loads(msg.payload)
+    print(res)
     if res["status"] == 403:
         # 
+        print("Disconnecting.....")
         mqttc.unsubscribe(sub_topic)
         mqttc.loop_stop()    #Stop loop 
         mqttc.disconnect() # disconnect
         sys.exit(1)
+    else:
+        print(res["status"])
         
     if len(data_list) and (data_list[-1]['data'] == "End"):  
         push_data_pck()
@@ -126,7 +132,7 @@ def on_subscribe(mosq, obj, mid, granted_qos):
 
 def on_publish(client,userdata,result):             #create function for callback
     print("data published: \n")
-    print(userdata)
+    print(result)
 
 # Initiate MQTT Client
 mqttc = mqtt.Client("sensor_gyro")

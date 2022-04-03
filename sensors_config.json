@@ -1,0 +1,21 @@
+{
+    "sensors" : [
+        {
+            "id" : 1,
+            "dataset_path" : "C:\\Users\\shash\\Documents\\rp_sensor_tool\\sensor_data\\accel_U1_T1.csv",
+            "dataset_reqd_cols" : [0,2,3,4],
+            "window_size" : 10,
+            "step_size" : 0.5
+        },
+        {
+            "id" : 2,
+            "dataset_path" : "C:\\Users\\shash\\Documents\\rp_sensor_tool\\sensor_data\\gyro_U1_T1.csv",
+            "dataset_reqd_cols" : [0,2,3,4],
+            "window_size" : 10,
+            "step_size" : 0.5
+        }
+    ],
+    "merge":{
+        "handle_missing_window" : "impute"
+    }
+}

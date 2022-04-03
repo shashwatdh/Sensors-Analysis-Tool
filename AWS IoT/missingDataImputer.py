@@ -62,22 +62,23 @@ def missing_data_impute_exp(last_window, next_window, cur_baseTS, cols):
         # 6. Calcultate aggr window data
         aggr_win = pd.DataFrame((left_df_wt * df_merged.iloc[:, 1:cols_skip].values) + 
                      (right_df_wt * df_merged.iloc[:,cols_skip:].values))
-        #print("aggr_win:",aggr_win, len(aggr_win), aggr_win.isnull().values.all())
+        print("aggr_win:",aggr_win, len(aggr_win), aggr_win.isnull().values.all())
+        print("aggr_win:",aggr_win)
         if aggr_win.isnull().values.all():
             return None
         return pd.concat([df_merged.loc[:,"timestamp"],
-                      pd.DataFrame((left_df_wt * df_merged.iloc[:, 1:cols_skip].values) + 
-                                   (right_df_wt * df_merged.iloc[:,cols_skip:].values))], axis=1)
+                      pd.DataFrame(((left_df_wt * df_merged.iloc[:, 1:cols_skip].values) + 
+                                   (right_df_wt * df_merged.iloc[:,cols_skip:].values)), columns=cols[1:])], axis=1)
     
     elif not left_df_wt:
-        #print("Only right df")
+        print("Only right df")
         return pd.concat([right_df.loc[:,"timestamp"],
-                          pd.DataFrame((right_df_wt * right_df.iloc[:,1:].values))], axis=1)
+                          pd.DataFrame((right_df_wt * right_df.iloc[:,1:].values), columns=cols[1:])], axis=1)
     
     else:
-        #print("only left df")
+        print("only left df")
         return pd.concat([left_df.loc[:,"timestamp"],
-                      pd.DataFrame((left_df_wt * left_df.iloc[:, 1:].values))], axis=1)
+                      pd.DataFrame((left_df_wt * left_df.iloc[:, 1:].values), columns=cols[1:])], axis=1)
     
      
                         
