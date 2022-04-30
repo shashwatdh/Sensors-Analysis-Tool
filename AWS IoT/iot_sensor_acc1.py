@@ -36,7 +36,7 @@ publish_data_lock = True
 sub_topic = "1/ack" # Topic to receive ACK
 data_list = []
 
-datatset_rows_limit = 145
+datatset_rows_limit = 40
 #dataset = pd.read_csv(data_path, header=None)
 dataset = pd.read_csv(data_path)
 X = dataset.iloc[:datatset_rows_limit, reqd_cols].values

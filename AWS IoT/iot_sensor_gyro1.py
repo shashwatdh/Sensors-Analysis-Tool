@@ -36,7 +36,7 @@ publish_data_lock = True
 sub_topic = "2/ack" # Topic to receive ACK
 data_list = []
 
-datatset_rows_limit = 109
+datatset_rows_limit = 45
 
 #dataset = pd.read_csv(data_path, header=None)
 dataset = pd.read_csv(data_path)

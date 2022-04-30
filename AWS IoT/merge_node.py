@@ -9,6 +9,7 @@ import sys
 from os.path import exists
 from services import fetch_time_stmp, df_cols
 from missingDataImputer import missing_data_impute_exp
+from feat_extr_module import extract_statistical_feat
 import time
 """
     Initial Setup:
@@ -62,7 +63,7 @@ for sensor in sensor_data:
     sensors_id.append(sensor["id"]) #unnecessary, use sensor_data instead
 
 print(merge_data)
-print(merge_data[1]["cols"])
+#print(merge_data[1]["cols"])
 # 1.2) Initializing value of counting semaphore
 counting_semaphore = len(sensor_data)
 
@@ -77,6 +78,7 @@ CA_PATH = os.path.join(".", "certs_merge","AmazonRootCA1(3).pem")
 CERT_PATH = os.path.join(".", "certs_merge","d056be5e3680c2fe06a1410774e479c33a3462e9e407c548f956031578c86e19-certificate.pem.crt.txt")
 KEY_PATH = os.path.join(".", "certs_merge","d056be5e3680c2fe06a1410774e479c33a3462e9e407c548f956031578c86e19-private.pem.key")                                                   # port no.   
 
+Abort_Proc = False
 def send_ack(sensor_id, status):
     # Sends ack
     res_data = {"status" : status}
@@ -106,9 +108,11 @@ def process_data_packet(payload):
     global counting_semaphore
     global last_commit_baseTS
     global file_name
+    global Abort_Proc
     rcvd_data = json.loads(payload)
     sensor_id = rcvd_data["sensor_id"]
-    
+    if Abort_Proc:
+        return
     # check if rcvd packet is END packet
     if rcvd_data["data"] == "End":
         #merge_data[sensor_id] = []
@@ -129,13 +133,18 @@ def process_data_packet(payload):
                 send_ack(s_id, 403)
                 
             print("Aborting Merge Operation......")
+            Abort_Proc = True
+            return
             # Once state of all sensors have been cleared, unsubscribe to MQTT
             # topic, disconnect from broker and terminate the process.
-            time.sleep(10)
+            """
+            data = json.dumps({"header":"", "data":[]}) 
+            mqttc.publish("merge_node/feat_ext", data, qos=1)
+            time.sleep(80)
             mqttc.unsubscribe(MQTT_TOPIC)
             mqttc.loop_stop()    #Stop loop 
             mqttc.disconnect() # disconnect
-            sys.exit(0)
+            sys.exit(0)"""
         else:
             sensors_end_req.append(sensor_id)
         return 
@@ -150,6 +159,9 @@ def process_data_packet(payload):
             Check if new data has been rcvd from a sensor and decr semaphore val.
             Otherwise just append the data.
         """
+        if sensor_id not in sensors_state:
+            
+            sys.exit(0)
         if len(sensors_state[sensor_id]["data"]) == 0:
             counting_semaphore -= 1
             # Setting base timestamp of sensor, as its the first packet after merge
@@ -274,6 +286,7 @@ def process_data_packet(payload):
                             if left_df is None:
                                 return
                     else:
+                        print("left_df data:", merge_data[left])#["data"])
                         left_df = pd.DataFrame(merge_data[left]["data"], columns = left_cols)
                         print("imputed left_df:", left_df)
                         #print("left cols:", left_cols)
@@ -367,7 +380,10 @@ def process_data_packet(payload):
                     else:
                         left_df.to_csv(file_path, mode="a")
                     print(left_df)
-                
+                    #extract_statistical_feat(left_df)
+                    print(left_df.columns.tolist())
+                    merged_data = json.dumps({"header":left_df.columns.tolist(),"data":left_df.values.tolist()}) 
+                    mqttc.publish("merge_node/feat_ext", merged_data, qos=1)
                 merge_data_pck()
                 #global sensors_end_req
                 # Check for end_trans req
@@ -453,11 +469,16 @@ def process_data_packet(payload):
                         print("Aborting Merge Operation......")
                         # Once state of all sensors have been cleared, unsubscribe to MQTT
                         # topic, disconnect from broker and terminate the process.
-                        time.sleep(10)
+                        Abort_Proc == True
+                        return 
+                        """
+                        data = json.dumps({"header":"", "data":[]}) 
+                        mqttc.publish("merge_node/feat_ext", data, qos=1)
+                        time.sleep(80)
                         mqttc.unsubscribe(MQTT_TOPIC)
                         mqttc.loop_stop()    #Stop loop 
                         mqttc.disconnect() # disconnect
-                        sys.exit(0)
+                        sys.exit(0)"""
                 
             
             """
@@ -479,11 +500,20 @@ def on_connect(mosq, obj, flags,rc):
 # This function will be invoked every time,
 # a new message arrives for the subscribed topic 
 def on_message(mosq, obj, msg):
+    global Abort_Proc
     print("Topic: " + str(msg.topic))
     print("QoS: " + str(msg.qos))
     print("Payload: " + str(msg.payload))
     # Process received data packet
     process_data_packet(msg.payload)
+    if Abort_Proc == True:
+        data = json.dumps({"header":"", "data":[]}) 
+        mqttc.publish("merge_node/feat_ext", data, qos=1)
+        #time.sleep(80)
+        mqttc.unsubscribe(MQTT_TOPIC)
+        mqttc.loop_stop()    #Stop loop 
+        mqttc.disconnect() # disconnect
+        sys.exit(0)
     
 def on_subscribe(mosq, obj, mid, granted_qos):
     print("Subscribed to Topic: " + MQTT_TOPIC)
