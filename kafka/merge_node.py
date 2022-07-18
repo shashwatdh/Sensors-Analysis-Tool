@@ -11,6 +11,9 @@ from services import fetch_time_stmp, df_cols
 from missingDataImputer import missing_data_impute_exp
 from feat_extr_module import extract_statistical_feat
 import time
+from kafka import KafkaConsumer
+from kafka import KafkaProducer
+
 """
     Initial Setup:
         1) For each sensor initailize the empty state.
@@ -59,31 +62,38 @@ for sensor in sensor_data:
     # Initialize column headers
     merge_data[sensor["id"]]["cols"] = df_cols(sensor["id"], len(sensor["dataset_reqd_cols"]))
     # 2.1) Setting topic for each sensor to publish ACK
-    publish_topics[sensor["id"]] = str(sensor["id"]) + "/ack"
+    publish_topics[sensor["id"]] = str(sensor["id"]) + "_ack"
     sensors_id.append(sensor["id"]) #unnecessary, use sensor_data instead
 
 print(merge_data)
 #print(merge_data[1]["cols"])
 # 1.2) Initializing value of counting semaphore
+
 counting_semaphore = len(sensor_data)
+subTopic = "sensors_data"
+featExtr_pub_topic = "merge_node_feat_ext"
+
+consumer = KafkaConsumer(subTopic, bootstrap_servers='localhost:9092')
+producer = KafkaProducer(bootstrap_servers="localhost:9092")
 
 # 2.2) Setting connection with data channel
 
-MQTT_PORT = 8883
-MQTT_KEEPALIVE_INTERVAL = 45
-MQTT_TOPIC = "sensors/data"
+#MQTT_PORT = 8883
+#MQTT_KEEPALIVE_INTERVAL = 45
+#MQTT_TOPIC = "sensors/data"
 
-AWS_ENDPOINT = "a2jdem77nz5dot-ats.iot.us-east-1.amazonaws.com"
-CA_PATH = os.path.join(".", "certs_merge","AmazonRootCA1(3).pem")
-CERT_PATH = os.path.join(".", "certs_merge","d056be5e3680c2fe06a1410774e479c33a3462e9e407c548f956031578c86e19-certificate.pem.crt.txt")
-KEY_PATH = os.path.join(".", "certs_merge","d056be5e3680c2fe06a1410774e479c33a3462e9e407c548f956031578c86e19-private.pem.key")                                                   # port no.   
+#AWS_ENDPOINT = "a2jdem77nz5dot-ats.iot.us-east-1.amazonaws.com"
+#CA_PATH = os.path.join(".", "certs_merge","AmazonRootCA1(3).pem")
+#CERT_PATH = os.path.join(".", "certs_merge","d056be5e3680c2fe06a1410774e479c33a3462e9e407c548f956031578c86e19-certificate.pem.crt.txt")
+#KEY_PATH = os.path.join(".", "certs_merge","d056be5e3680c2fe06a1410774e479c33a3462e9e407c548f956031578c86e19-private.pem.key")                                                   # port no.   
 
 Abort_Proc = False
 def send_ack(sensor_id, status):
     # Sends ack
     res_data = {"status" : status}
     print(res_data)
-    mqttc.publish(publish_topics[sensor_id], json.dumps(res_data), qos=1)
+    producer.send(publish_topics[sensor_id], json.dumps(res_data).encode("utf-8"))
+    #mqttc.publish(publish_topics[sensor_id], json.dumps(res_data), qos=1)
 
 
 def process_data_packet(payload):
@@ -134,6 +144,9 @@ def process_data_packet(payload):
                 
             print("Aborting Merge Operation......")
             Abort_Proc = True
+            data = json.dumps({"header":"", "data":[]}) 
+            producer.send(featExtr_pub_topic, data.encode("utf-8"))
+            print("Sent END signal to fet_extr module:", data)
             return
             # Once state of all sensors have been cleared, unsubscribe to MQTT
             # topic, disconnect from broker and terminate the process.
@@ -208,14 +221,15 @@ def process_data_packet(payload):
             last_TS = fetch_lastTS_sensor()#rcvd_data["base_Timestamp"]
             
             def fetch_startTS_sensor():
-                nonlocal sensor_id
+                #nonlocal sensor_id
                 # Fetch nearest timestamp from last_commit_TS and corresponding sensor
+                minBT_sensor = sensor_id
                 min_TS = last_TS + (sensors_state[sensor_id]["window_size"] * sensors_state[sensor_id]["step_size"]) # lastTS + step_size, even +1 wud have worked
                 for sensor in sensors_id:#sensors_state.keys():
                     TS = sensors_state[sensor]["base_Timestamp"] # or sensors_state[sensor]["data"][0]["base_Timestamp"] 
                     if (TS >= 0) and (TS < min_TS):
-                        (min_TS, sensor_id) = (TS, sensor)
-                return (min_TS, sensor)
+                        (min_TS, minBT_sensor) = (TS, sensor)
+                return (min_TS, minBT_sensor)
                 
             (start_TS, sensor) = fetch_startTS_sensor()
             while start_TS <= last_TS:
@@ -384,7 +398,12 @@ def process_data_packet(payload):
                     #extract_statistical_feat(left_df)
                     print(left_df.columns.tolist())
                     merged_data = json.dumps({"header":left_df.columns.tolist(),"data":left_df.values.tolist()}) 
-                    mqttc.publish("merge_node/feat_ext", merged_data, qos=1)
+                    #data = json.dumps({"header":"", "data":[]}) 
+                    producer.send(featExtr_pub_topic, merged_data.encode("utf-8"))
+                    print("Sent data to fet_extr module:", merged_data)
+                    #---------------------------
+                    #mqttc.publish("merge_node/feat_ext", merged_data, qos=1) #IMPORTANT
+                    #---------------------------
                 merge_data_pck()
                 #global sensors_end_req
                 # Check for end_trans req
@@ -470,7 +489,10 @@ def process_data_packet(payload):
                         print("Aborting Merge Operation......")
                         # Once state of all sensors have been cleared, unsubscribe to MQTT
                         # topic, disconnect from broker and terminate the process.
-                        Abort_Proc == True
+                        Abort_Proc = True
+                        data = json.dumps({"header":"", "data":[]}) 
+                        producer.send(featExtr_pub_topic, data.encode("utf-8"))
+                        print("Sent END signal to fet_extr module:", data)
                         return 
                         """
                         data = json.dumps({"header":"", "data":[]}) 
@@ -491,7 +513,14 @@ def process_data_packet(payload):
                 if sensors_state[sensor]["base_Timestamp"] < 0:
                     counting_semaphore += 1
         
-        
+for message in consumer:
+    #msg = json.loads(message.value.decode("utf-8"))
+    process_data_packet(message.value.decode("utf-8"))
+    #print(json.loads(msg)["order_id"])
+    if Abort_Proc:
+        break
+
+'''        
 # Define on connect event function
 # We shall subscribe to our Topic in this function
 def on_connect(mosq, obj, flags,rc):
@@ -515,13 +544,17 @@ def on_message(mosq, obj, msg):
         mqttc.loop_stop()    #Stop loop 
         mqttc.disconnect() # disconnect
         sys.exit(0)
-    
+'''
+"""
 def on_subscribe(mosq, obj, mid, granted_qos):
     print("Subscribed to Topic: " + MQTT_TOPIC)
 
 def on_publish(client,userdata,result):             #create function for callback
     print("data published: \n")
     print(result)
+
+"""    
+'''
 # Initiate MQTT Client
 mqttc = mqtt.Client()
 
@@ -539,5 +572,5 @@ mqttc.connect(AWS_ENDPOINT, MQTT_PORT, MQTT_KEEPALIVE_INTERVAL)
 
 # Continue monitoring the incoming messages for subscribed topic
 mqttc.loop_forever()
-
+'''
     

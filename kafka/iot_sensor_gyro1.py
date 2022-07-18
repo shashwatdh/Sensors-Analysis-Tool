@@ -24,7 +24,7 @@ with open(sensors_config) as fp:
     config_data = json.load(fp)
 fp.close()
 
-sensor_config = config_data["sensors"][0]
+sensor_config = config_data["sensors"][1]
 sensor_id = sensor_config["id"]
 data_path = sensor_config["dataset_path"] 
 window_size = sensor_config['window_size']
@@ -33,17 +33,15 @@ reqd_cols = sensor_config["dataset_reqd_cols"]
 
 #connflag = False
 publish_data_lock = True
-sub_topic = "1/ack" # Topic to receive ACK
+sub_topic = "2/ack" # Topic to receive ACK
 data_list = []
 
-datatset_rows_limit = 75
+datatset_rows_limit = 42
+
 #dataset = pd.read_csv(data_path, header=None)
 dataset = pd.read_csv(data_path)
 X = dataset.iloc[:datatset_rows_limit, reqd_cols].values
-"""
-    base_TS can't be assigned to some random value. We must calculate
-    base_TS of window nearest to rec if no error would have occured. 
-"""
+
 base_TS = (X[0,0] // window_size) * window_size
 #base_TS += step_size if (base_TS + step_size) <= X[0,0] else 0
 
@@ -61,6 +59,8 @@ def push_data_pck():
 
 def push_to_dataQ(sensor_data):
     global publish_data_lock
+    global base_TS
+    
     # Pushes sensor data to data queue
     window_data["base_Timestamp"] = base_TS
     window_data["data"] = sensor_data
@@ -89,6 +89,7 @@ def on_connect(client, userdata, flags, rc):
 def on_message(mosq, obj, msg):
     global publish_data_lock
     print("Topic: " + str(msg.topic))
+    print("ACK: " + str(msg.payload))
     
     """
         Data ACK is rcvd. 
@@ -100,8 +101,9 @@ def on_message(mosq, obj, msg):
         data on channel.
     """
     res = json.loads(msg.payload)
+    print(res)
     if res["status"] == 403:
-        # terminate the process
+        # 
         print("Disconnecting.....")
         mqttc.unsubscribe(sub_topic)
         mqttc.loop_stop()    #Stop loop 
@@ -133,7 +135,7 @@ def on_publish(client,userdata,result):             #create function for callbac
     print(result)
 
 # Initiate MQTT Client
-mqttc = mqtt.Client("sensor_acc")
+mqttc = mqtt.Client("sensor_gyro")
 
 # Assign event callbacks
 mqttc.on_message = on_message
@@ -144,9 +146,9 @@ mqttc.on_publish = on_publish
 #### Change following parameters #### 
 awshost = "a2jdem77nz5dot-ats.iot.us-east-1.amazonaws.com"                  # endpoint
 awsport = 8883   
-caPath = os.path.join(".", "certs_acc","AmazonRootCA1(2).pem")
-certPath = os.path.join(".", "certs_acc","69b5f46c37d85bbd295373c5385b0f95382dd7765427f97facaeda4e20dd166e-certificate.pem.crt.txt")
-keyPath = os.path.join(".", "certs_acc","69b5f46c37d85bbd295373c5385b0f95382dd7765427f97facaeda4e20dd166e-private.pem.key")                                                   # port no.   
+caPath = os.path.join(".", "certs_gyro","AmazonRootCA1(2).pem")
+certPath = os.path.join(".", "certs_gyro","6741f706b58e3bf8c139bee31df1ee0c74b862cae56866f1f981a4f2d51661b9-certificate.pem.crt.txt")
+keyPath = os.path.join(".", "certs_gyro","6741f706b58e3bf8c139bee31df1ee0c74b862cae56866f1f981a4f2d51661b9-private.pem.key")                                                   # port no.   
 
 mqttc.tls_set(ca_certs=caPath, certfile=certPath, keyfile=keyPath, cert_reqs=ssl.CERT_REQUIRED,
               tls_version=ssl.PROTOCOL_TLSv1_2, ciphers=None)       # pass parameters
@@ -155,7 +157,7 @@ mqttc.connect(awshost, awsport, keepalive=60)                       # connect to
 mqttc.loop_start()                                                 # start background network thread
                                          
     
-for rec in X:
+for rec in X[:]:
     
     # storing values recorded in a time frame into a list
     if rec[0] < (base_TS + window_size):
@@ -195,6 +197,7 @@ for rec in X:
                 base_TS of window nearest to rec if no error would have occured. 
             """
             base_TS = (rec[0] // window_size) * window_size
+            # sensor_data must can be further segmented; cur logic only works for 50%overlap 
             #base_TS += step_size if (base_TS + step_size) <= rec[0] else 0
         
         sensor_data.append(rec[:].tolist())
@@ -203,11 +206,10 @@ for rec in X:
 while base_TS <= rec[0]:
     push_to_dataQ(sensor_data[:])
     base_TS += step_size
-    # remove entries having baseTS < updated baseTS
+    # reove entries having baseTS < updated baseTS
     while len(sensor_data) and sensor_data[0][0] < base_TS:
         del sensor_data[0]
     #sensor_data = [rec_i for rec_i in sensor_data if rec_i[0] >= base_TS]
         
 # Push END packet
 push_to_dataQ("End")
-

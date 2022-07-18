@@ -3,14 +3,14 @@ import numpy as np
 import os
 import json
 import sys
-sys.path.append(".")
-import sensor 
+#sys.path.append(".")
+from . import sensor 
 
 
 class inertial_sensors:
     def __init__(self, sensor_config):#sensor_id):
          
-        self.sensors_config = os.path.join("..", "..","sensors_config.json")
+        self.sensors_config = os.path.join("..","sensors_config.json")
         with open(self.sensors_config) as fp:
             self.config_data = json.load(fp)
         fp.close()

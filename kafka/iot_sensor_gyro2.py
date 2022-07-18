@@ -1,3 +1,5 @@
+from pickle import FALSE
+import time
 import paho.mqtt.client as mqtt
 import ssl
 from time import sleep
@@ -8,6 +10,10 @@ import os
 import numpy as np
 import pandas as pd
 import sys
+from kafka import KafkaConsumer
+from kafka import KafkaProducer
+import threading
+
 """
     Sensor Node:
     - In main thread data will be generated and pushed to a list(queue).
@@ -24,7 +30,7 @@ with open(sensors_config) as fp:
     config_data = json.load(fp)
 fp.close()
 
-sensor_config = config_data["sensors"][0]
+sensor_config = config_data["sensors"][1]
 sensor_id = sensor_config["id"]
 data_path = sensor_config["dataset_path"] 
 window_size = sensor_config['window_size']
@@ -32,11 +38,12 @@ step_size = window_size * sensor_config["step_size"]
 reqd_cols = sensor_config["dataset_reqd_cols"]
 
 #connflag = False
-publish_data_lock = True
-sub_topic = "1/ack" # Topic to receive ACK
+publish_data_lock = False
+sub_topic = "2_ack" # Topic to receive ACK
+pub_topic = "sensors_data"
 data_list = []
 
-datatset_rows_limit = 75
+datatset_rows_limit = 100#42
 #dataset = pd.read_csv(data_path, header=None)
 dataset = pd.read_csv(data_path)
 X = dataset.iloc[:datatset_rows_limit, reqd_cols].values
@@ -57,7 +64,8 @@ window_data = {
 
 def push_data_pck():
     data_pck = data_list.pop(0) # Remove head packet
-    mqttc.publish("sensors/data", json.dumps(data_pck), qos=1)
+    #mqttc.publish("sensors/data", json.dumps(data_pck), qos=1)
+    producer.send(pub_topic, json.dumps(data_pck).encode("utf-8"))
 
 def push_to_dataQ(sensor_data):
     global publish_data_lock
@@ -67,11 +75,12 @@ def push_to_dataQ(sensor_data):
     data_list.append(window_data.copy())
     
     # check if producer can publish data
+    
     if not publish_data_lock:
         push_data_pck()
         publish_data_lock = True
 
-
+'''
 # Setting up connection with data channel
 def on_connect(client, userdata, flags, rc):                        
     global publish_data_lock                                                 
@@ -153,10 +162,57 @@ mqttc.tls_set(ca_certs=caPath, certfile=certPath, keyfile=keyPath, cert_reqs=ssl
  
 mqttc.connect(awshost, awsport, keepalive=60)                       # connect to AWS server
 mqttc.loop_start()                                                 # start background network thread
-                                         
-    
+'''                                         
+
+consumer = KafkaConsumer(sub_topic, bootstrap_servers='localhost:9092')
+producer = KafkaProducer(bootstrap_servers="localhost:9092")
+abort_proc = False
+thread_started = False
+
+def bck_thread():
+    #global lock
+    global producer
+    global abort_proc
+    global thread_started
+    global data_list
+    global consumer
+
+    #consumer = KafkaConsumer(sub_topic, bootstrap_servers='localhost:9092')
+    print("gyro_thread started....")
+    thread_started = True
+
+    for msg in consumer:
+               
+        r_msg = json.loads(msg.value.decode("utf-8"))
+        #print(json.loads(msg)["order_id"])
+        print(r_msg["status"])
+        if r_msg["status"] == 403:
+            abort_proc = True
+            data_list = []
+            break
+        
+        else:
+            print("rcvd ack - ", r_msg["status"])
+            print("packet BS (to be sent):", data_list[0]["base_Timestamp"])
+            push_data_pck()
+            #data_pck = data_list.pop(0) # Remove head packet
+            #producer.send("order_details", data_pck) #json.dumps(data_pck).encode("utf-8"))
+            print("packet sent...")
+
+
+t1 = threading.Thread(target=bck_thread)
+t1.start()
+
+while not thread_started:
+    continue
+
+time.sleep(10)
+print("Start segmenting windows....")
 for rec in X:
     
+    if abort_proc:
+        break
+
     # storing values recorded in a time frame into a list
     if rec[0] < (base_TS + window_size):
         sensor_data.append(rec[:].tolist()) 
@@ -172,6 +228,7 @@ for rec in X:
         '''
         
         if len(sensor_data):
+            print("pushing win to data list")
             push_to_dataQ(sensor_data[:])
         
         base_TS += step_size
@@ -187,6 +244,7 @@ for rec in X:
             
             """
             if len(sensor_data):
+                print("pushing win to data list")
                 push_to_dataQ(sensor_data[:])
             
             sensor_data = []
@@ -200,7 +258,7 @@ for rec in X:
         sensor_data.append(rec[:].tolist())
         
 # Push last data packets to queue
-while base_TS <= rec[0]:
+while not abort_proc and base_TS <= rec[0]:
     push_to_dataQ(sensor_data[:])
     base_TS += step_size
     # remove entries having baseTS < updated baseTS
@@ -209,5 +267,7 @@ while base_TS <= rec[0]:
     #sensor_data = [rec_i for rec_i in sensor_data if rec_i[0] >= base_TS]
         
 # Push END packet
-push_to_dataQ("End")
+if not abort_proc:
+    push_to_dataQ("End")
 
+t1.join()
