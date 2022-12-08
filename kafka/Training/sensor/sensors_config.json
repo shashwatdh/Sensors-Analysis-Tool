@@ -1,0 +1,94 @@
+{
+    "sensors" : [
+        {
+            "id" : "1",
+            "type" : "inertial",
+            "dataset_path" : "C:\\Users\\shash\\Documents\\rp_sensor_tool\\sensor_data\\accel_U1_T1.csv",
+            "dataset_reqd_cols" : [0,18,19,20],
+            "window_size" : 60,
+            "step_size" : 0.5,
+            "rows_limit" : 1155,
+            "chunk_size" : 100,
+            "comm_channel" : "kafka",
+            "AWS_endpoint" : "a2jdem77nz5dot-ats.iot.us-east-1.amazonaws.com",
+            "AWS_port" : 8883,
+            "CA_path" : "C:\\Users\\shash\\Documents\\rp_sensor_tool\\AWS IoT\\certs_acc\\AmazonRootCA1(2).pem",
+            "key_path" :  "C:\\Users\\shash\\Documents\\rp_sensor_tool\\AWS IoT\\certs_acc\\69b5f46c37d85bbd295373c5385b0f95382dd7765427f97facaeda4e20dd166e-private.pem.key",
+            "certf_path" : "C:\\Users\\shash\\Documents\\rp_sensor_tool\\AWS IoT\\certs_acc\\69b5f46c37d85bbd295373c5385b0f95382dd7765427f97facaeda4e20dd166e-certificate.pem.crt.txt",
+            "pub_topic" : "sensors_data",
+            "sub_topic" : "1_ack",
+            "labelExtr": {
+                "chunkSize":100, 
+                "files" : ["C:\\Users\\shash\\Documents\\rp_sensor_tool\\kafka\\Training\\1155FF54-63D3-4AB2-9863-8385D0BD0A13.features_labels.csv"],
+                "labelCol": -1,
+                "timestampCol": 0,
+                "isFileBreakEnabled": true
+            },
+            "dataset": {
+                "chunkSize":100, 
+                "files" : ["C:\\Users\\shash\\Documents\\rp_sensor_tool\\kafka\\Training\\1155FF54-63D3-4AB2-9863-8385D0BD0A13.features_labels.csv"],
+                "cols": [0,18,19,20],
+                "isFileBreakEnabled": true
+            }
+        },
+        {
+            "id" : "2",
+            "type" : "inertial",
+            "dataset_path" : "C:\\Users\\shash\\Documents\\rp_sensor_tool\\sensor_data\\gyro_U1_T1.csv",
+            "dataset_reqd_cols" : [0,44,45,46],
+            "window_size" : 60,
+            "step_size" : 0.5,
+            "rows_limit" : 1050,
+            "chunk_size" : 100,
+            "comm_channel" : "kafka",
+            "AWS_endpoint" : "a2jdem77nz5dot-ats.iot.us-east-1.amazonaws.com",
+            "AWS_port" : 8883,
+            "CA_path" : "C:\\Users\\shash\\Documents\\rp_sensor_tool\\AWS IoT\\certs_gyro\\AmazonRootCA1(2).pem",
+            "key_path" :  "C:\\Users\\shash\\Documents\\rp_sensor_tool\\AWS IoT\\certs_gyro\\6741f706b58e3bf8c139bee31df1ee0c74b862cae56866f1f981a4f2d51661b9-private.pem.key",
+            "certf_path" : "C:\\Users\\shash\\Documents\\rp_sensor_tool\\AWS IoT\\certs_gyro\\6741f706b58e3bf8c139bee31df1ee0c74b862cae56866f1f981a4f2d51661b9-certificate.pem.crt.txt",
+            "pub_topic" : "sensors_data",
+            "sub_topic" : "2_ack",
+            "labelExtr": {
+                "chunkSize":100, 
+                "files" : ["C:\\Users\\shash\\Documents\\rp_sensor_tool\\kafka\\Training\\1155FF54-63D3-4AB2-9863-8385D0BD0A13.features_labels.csv"],
+                "labelCol": -1,
+                "timestampCol": 0,
+                "isFileBreakEnabled": true
+            },
+            "dataset": {
+                "chunkSize":100, 
+                "files" : ["C:\\Users\\shash\\Documents\\rp_sensor_tool\\kafka\\Training\\1155FF54-63D3-4AB2-9863-8385D0BD0A13.features_labels.csv"],
+                "cols": [0,44,45,46],
+                "isFileBreakEnabled": true
+            }
+        }
+    ],
+    "merge":{
+        "handle_missing_window" : "impute",
+        "comm_channel" : "kafka"
+    },
+    "feature_extraction" : {
+                "pre_processing":{
+                        "data_cleaning" : {
+                                   "missing_data" : "discard",
+                                   "redundant_data" : "discard"                
+                        },
+                        "data_transformation" : {
+                            "normalization" : "None"
+                        }
+                },
+                "types" : {
+                     "statistical" : {
+                                                "mean" : ["all"],
+                                                "std" : ["all"], 
+                                                "max" : ["all"],
+                                                "min" : ["all"]
+                                    }   
+                },
+                "file_handling" : {
+                    "rec_buf_limit" : 50
+                }   
+             
+             
+         }
+}

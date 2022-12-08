@@ -1,3 +1,4 @@
+from cProfile import label
 import paho.mqtt.client as mqtt
 import ssl
 import os
@@ -27,14 +28,15 @@ class feature_extraction:
         self.feat_ext_types = list(self.config_data["feature_extraction"]["types"].keys())
 
         self.file_name = "feat_ext_" + fetch_time_stmp() + ".csv"
-        self.file_path = os.path.join(".", self.file_name)
+        self.file_path = os.path.join(self.file_name)#(".", self.file_name)
         self.file_rec_buf = []
         self.recs_buf_limit = self.feat_ext_config["file_handling"]["rec_buf_limit"]
         self.rec_counter = 0
 
         self.subTopic = "merge_node_feat_ext"
+        self.pubTopic = "model_training_validation"
         self.consumer = KafkaConsumer(self.subTopic, bootstrap_servers='localhost:9092')
-
+        self.producer = KafkaProducer(bootstrap_servers="localhost:9092")
         self.abort_proc = False
 
     def file_dump(self):
@@ -59,6 +61,7 @@ class feature_extraction:
         #print(payload)
         #merged_data = pd.DataFrame(payload)
         rcvd_merged_data = json.loads(payload)
+        print("rcvd data:", rcvd_merged_data)
         print("len of data rcvd:",len(rcvd_merged_data["data"]))
     
         if len(rcvd_merged_data["data"]) == 0:#rcvd_merged_data["data"] == "end":
@@ -94,9 +97,15 @@ class feature_extraction:
                 #features.extend(extract_statistical_feat(merged_df, feat_ext_config["types"][feat_ext_type]))
                 extr_features, extr_header = extract_statistical_feat(merged_df, self.feat_ext_config["types"][feat_ext_type])
                 features.extend(extr_features)
+                print("features", features)
                 if not exists(self.file_path):
                     header.extend(extr_header)
-    
+        #------------test------------
+        if "label" in rcvd_merged_data:
+            header.append("label")
+            features.append(rcvd_merged_data["label"])
+        #---------test-------------------------
+
         if not exists(self.file_path):
             pd.DataFrame([header]).to_csv(self.file_path, mode="a", header=False)
         
@@ -125,6 +134,9 @@ class feature_extraction:
             if self.abort_proc:
                 if self.rec_counter: #len(file_rec_buf):
                     self.file_dump()
+                self.producer.send(self.pubTopic, json.dumps({
+                    "dataset":self.file_path
+                }).encode("utf-8"))
                 break
 
 
