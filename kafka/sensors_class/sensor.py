@@ -8,6 +8,19 @@ import json
 from kafka import KafkaConsumer
 from kafka import KafkaProducer
 import threading
+
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.generic):
+            return obj.item()
+        return super(NpEncoder, self).default(obj)
+
 class sensor:
     def __init__(self, config_data):
     
@@ -178,7 +191,7 @@ class sensor:
         if self.comm_channel == "AWS_IoT":
             self.mqtt_client.publish(self.pub_topic, json.dumps(data_pck), qos=1)
         else:
-            self.producer.send(self.pub_topic, json.dumps(data_pck).encode("utf-8"))
+            self.producer.send(self.pub_topic, json.dumps(data_pck, cls=NpEncoder).encode("utf-8"))
         print("pub_Data:", data_pck, self.pub_topic)
         #pass
     
@@ -226,8 +239,12 @@ class sensor:
         
         if len(self.current_chunk) == 0:
             try:
-                self.current_chunk = self.dataset.get_chunk(self.chunk_size).iloc[:,self.reqd_cols].values  #.iloc[:self.rows_limit, self.reqd_cols].values
-            
+                self.current_chunk = self.dataset.get_chunk(self.chunk_size).iloc[:,self.reqd_cols]#.values  #.iloc[:self.rows_limit, self.reqd_cols].values
+                self.current_chunk.iloc[:,0] = self.current_chunk.iloc[:,0].astype(float)
+                self.current_chunk = self.current_chunk.values
+                #print("chunk:", self.current_chunk)
+                
+                
             except StopIteration:
                 self.dataset_read_completed = True
                 return[]
@@ -265,8 +282,15 @@ class sensor:
             row = (row + 1) % len(self.current_chunk)
             if not row:
                 try:
-                    self.current_chunk = self.dataset.get_chunk(self.chunk_size).iloc[:,self.reqd_cols].values #.iloc[:self.rows_limit, self.reqd_cols].values
+                    #self.current_chunk = self.dataset.get_chunk(self.chunk_size).iloc[:,self.reqd_cols].values #.iloc[:self.rows_limit, self.reqd_cols].values
+                    
+                    self.current_chunk = self.dataset.get_chunk(self.chunk_size).iloc[:,self.reqd_cols]#.values  #.iloc[:self.rows_limit, self.reqd_cols].values
+                    self.current_chunk.iloc[:,0] = self.current_chunk.iloc[:,0].astype(float)
+                    self.current_chunk = self.current_chunk.values
+                
                     cur_chunk = self.current_chunk
+                    
+                    #print("chunk:", cur_chunk)
                     self.chunk_count += 1
                 except StopIteration:
                     self.dataset_read_completed = True
